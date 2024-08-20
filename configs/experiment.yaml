@@ -1,0 +1,23 @@
+experiment_conf:
+    log_model_weights: True
+    transform_conf:
+        switch_params: null
+        duplicate_params: [1, 6, 1]
+        full_backbone_copy: False
+        no_layernorm_full_backbone_copy: False
+        first_n_layers: null
+        new_backbone_training: True
+        readout2_training: True
+        model_variants: 
+          - "modified"
+          - "full_backbone + no_final_layer_norm"
+        transform_variants: 
+          - "duplicate_layers"
+          - "switch_layers"
+    auto_transform_conf:
+        permute_bounds_params: [1, 6]
+        permute_interval: 10
+        PERMUTE_MODEL: True
+        auto_transform_variants:
+          - "auto_permute_layers"
+          - "auto_custom_permute"

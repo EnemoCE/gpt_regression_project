@@ -1,0 +1,69 @@
+#inherit:
+#    - models/standard.yaml
+#    - experiment.yaml
+#    - wandb.yaml
+
+model:
+    n_dims: 5
+    n_positions: 20
+    family: gpt2
+    n_embd: 256
+    n_layer: 6
+    n_head: 4
+
+training:
+    task: linear_regression
+    data: gaussian
+    task_kwargs: {}
+    batch_size: 64
+    learning_rate: 0.0001
+    save_every_steps: 1000
+    keep_every_steps: 100000
+    max_iters: 10000
+    eval_interval: 200
+    eval_iters: 20
+    curriculum:
+        dims:
+            start: 5
+            end: 5
+            inc: 1
+            interval: 2000
+        points:
+            start: 20
+            end: 20
+            inc: 2
+            interval: 2000
+
+experiment_conf:
+    log_model_weights: True
+    transform_conf:
+        switch_params: null
+        duplicate_params: [1, 6, 1]
+        full_backbone_copy: False
+        no_layernorm_full_backbone_copy: False
+        first_n_layers: null
+        new_backbone_training: False
+        readout2_training: False
+        model_variants: 
+          - "modified"
+          - "full_backbone + no_final_layer_norm"
+        transform_variants: 
+          - "duplicate_layers"
+          - "switch_layers"
+    auto_transform_conf:
+        permute_bounds_params: [1, 6]
+        permute_interval: 10
+        permute_model: False
+        auto_transform_variants:
+          - "auto_permute_layers"
+          - "auto_custom_permute"
+
+
+out_dir: .\exp_models\linear_regression
+
+wandb:
+    name: "linear_regression_toy"
+    project: in-context-training
+    entity: enemo_ce-warch
+    notes: my experiment notes
+    log_every_steps: 100
