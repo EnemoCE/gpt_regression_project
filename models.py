@@ -69,7 +69,7 @@ class TransformerModel(nn.Module):
                         paramA.copy_(paramB)
             
             new_backbone.h = nn.ModuleList(layers)
-        elif model_variant == 'modified + no_final_layer_norm':
+        elif model_variant == 'full_backbone + no_final_layer_norm':
             new_backbone = deepcopy(self._backbone)
             new_backbone.ln_f = nn.Identity()
         else:
@@ -82,7 +82,7 @@ class TransformerModel(nn.Module):
         for ele in self.model_variants:
             self._h_new_backbone[ele] = self.recompose(ele)
 
-    def clear_read_out2(self):
+    def clear_readout2(self):
         self._read_out2 = self._read_out
     
 
@@ -106,8 +106,8 @@ class TransformerModel(nn.Module):
         if eval:
             with torch.no_grad():
                 if self.transform_params.first_n_layers:
-                    output_hidden_state = output.hidden_states[self.transform_params.first_n_layers].clone().detach()
-                    logits2 = self._read_out(output_hidden_state)
+                    in_output = output.hidden_states[self.transform_params.first_n_layers].clone().detach()
+                    logits2 = self._read_out(in_output)
                 else:
                     in_output = embeds.clone().detach()
                     if not full_backbone_copy:
@@ -119,12 +119,12 @@ class TransformerModel(nn.Module):
                             k = 0
                             if no_layernorm_full_backbone_copy == True:
                                 k = 1
-                            in_output = self._new_backbone(inputs_embeds=in_output, model_variant = self.model_variants[k]).last_hidden_state
-                            """
-                            with torch.enable_grad():
-                                in_output = self._transmit(in_output)
-                            """
-                            in_output = self._new_backbone(inputs_embeds=in_output, model_variant = self.model_variants[0]).last_hidden_state
+                            for i in range(2):
+                                in_output = self._new_backbone(inputs_embeds=in_output, model_variant = self.model_variants[k]).last_hidden_state
+                                """
+                                with torch.enable_grad():
+                                    in_output = self._transmit(in_output)
+                                """
             if self.transform_params.readout2_training:
                 logits2 = self._read_out2(in_output)
         logits = self._read_out(output.last_hidden_state)

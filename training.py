@@ -7,6 +7,9 @@ from curriculum import Curriculum
 from eval import evaluate_test_task, estimate_loss
 from task_sampler import get_batch
 from plot_utils import built_fig, plt_icl, setup_plot_params
+from plot_layer_errors import plot_layer_errors
+from copy import deepcopy
+import torch.nn as nn
 
 
 
@@ -20,9 +23,10 @@ def train_step(model, args, eval=False):
     # evaluate the loss
     logits, logits2, loss1, loss2 = model(xb, yb, eval)
     optimizer.zero_grad(set_to_none=True)
-    loss1.backward()
     if loss2:
         loss2.backward()
+    else:
+        loss1.backward()
     optimizer.step()
 
 
@@ -60,9 +64,10 @@ def train(model, args):
     for iter in range(max_iters):
         train_step(model, args)
         if iter % eval_interval == 0 or iter == max_iters - 1:
-            model.update_new_backbone()
+            if not model.transform_params.diverge_new_backbone_training:
+                model.update_new_backbone()
             if model.transform_params.readout2_training:
-                for i in range(100):
+                for i in range(eval_interval):
                     train_step(model, args, eval=True)
             losses = estimate_loss(model, args)
             loss1, loss2 = losses[0], losses[1]
@@ -74,13 +79,15 @@ def train(model, args):
                 },
                 step=iter,
             )
-            model.clear_read_out2()
+            if model.transform_params.clear_readout2:
+                model.clear_readout2()
         
         if (iter % curriculum.n_points_schedule.interval == 0 or iter == plot_step) and iter != 0:
             x_examples = np.arange(1, curriculum.n_points+1)
         
         if (iter % curriculum.n_dims_schedule.interval == 0  or iter == plot_step) and iter != 0:
-            model.update_new_backbone()
+            if not model.transform_params.diverge_new_backbone_training:
+                model.update_new_backbone()
             er1_m = max(evaluate_test_task(model, curriculum, 250, logs_ch=1))
             er2_m = max(evaluate_test_task(model, curriculum, 250, logs_ch=2))
             label_it = color_it = 0
@@ -99,6 +106,7 @@ def train(model, args):
         if permute_model and iter % permute_interval == 0 and iter != 0:
             model.auto_recompose()
         if iter % plot_step == 0 and iter != 0:
+            model.auto_recompose()
             errors1 = evaluate_test_task(model, curriculum, 500, logs_ch=1)
             errors2 = evaluate_test_task(model, curriculum, 500, logs_ch=2)
 
@@ -127,3 +135,31 @@ def train(model, args):
     
         curriculum.update()
 
+    def retrain_readout2(model_i, args, num_steps):
+        readout2_optimizer = torch.optim.AdamW(model_i._read_out2.parameters(), lr=args.training.learning_rate)
+        for _ in range(num_steps):
+            xb, yb = get_batch(args.curriculum, args.training.batch_size)
+            logits, logits2, loss1, loss2 = model_i(xb, yb, eval=True)
+            readout2_optimizer.zero_grad()
+            loss2.backward()
+            readout2_optimizer.step()
+
+
+    num_layers = model.configuration.n_layer
+
+    layer_errors = []
+    layer_numbers = list(range(1, num_layers + 1))
+
+    for i in layer_numbers:
+        model_i = deepcopy(model)
+        model_i.transform_params.first_n_layers = i
+        model_i._read_out2 = nn.Linear(model_i.configuration.n_embd, 1).to(model_i._read_out2.weight.device)
+        retrain_readout2(model_i, args, num_steps=1000)
+        errors = evaluate_test_task(model_i, curriculum, 500, logs_ch=1)
+        error_at_25 = errors[24]
+        layer_errors.append(error_at_25)
+
+    plot_save_path = os.path.join(out_dir, 'plots', short_description, 'layer_errors.png')
+    plot_layer_errors(layer_numbers, layer_errors, save_path=plot_save_path)
+
+    return wandb.run

@@ -4,6 +4,8 @@ import torch
 from models import build_model
 from training import train
 
+from configurations import build_conf
+
 
 
 def nested_dict_repr(d, indent=0):
@@ -41,7 +43,6 @@ def recursive_update_inplace(current_d, updates):
         traverse_dict(current_d, search_key, update_value, found)
         if not found['t']:
             raise ValueError(f'Key {search_key} doesn\'t exist')
-    return current_d
 
 
 
@@ -51,17 +52,14 @@ class Experiment:
     
     
     def init_conf_short_description(self, conf, short_name = None):
-        self._conf = conf
-        if not getattr(self._conf.experiment_conf, 'short_description', None):
-            self._conf.experiment_conf.short_description = short_name if short_name else 'baseline'
-        
-        return self._conf
+        if not getattr(conf.experiment_conf, 'short_description', None):
+            conf.experiment_conf.short_description = short_name if short_name else 'baseline'
+        return conf
 
 
     def run_experiment(self, conf=None):
         if not conf:
             conf = self._conf
-        
         self.experiment_info(conf)
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -76,7 +74,8 @@ class Experiment:
         # Print the number of parameters in the model
         print(sum(p.numel() for p in m.parameters()) / 1e6, 'M parameters')
     
-        train(model, conf)
+        wandb_run = train(model, conf)
+        return wandb_run
 
     
     @classmethod
@@ -91,10 +90,11 @@ class Experiment:
 
     def customize_experiment(self, conf=None, update=None, short_name=None):
         if not conf:
-            conf = self._conf
+            conf = self._conf.conf_data
         if update:
-            self._conf = recursive_update_inplace(conf.experiment_conf, update)
+            recursive_update_inplace(conf.experiment_conf, update)
         conf = self.init_conf_short_description(conf, short_name=short_name)
+        self._conf = build_conf(conf)
         return conf
     
 

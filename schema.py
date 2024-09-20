@@ -70,12 +70,16 @@ wandb_schema = {
 transform_schema = {
     "switch_params": merge(tlist, nullable),
     "duplicate_params": merge(tlist, nullable),
+    "slice_params": merge(tlist, nullable),
     "full_backbone_copy": merge(tboolean, default(False)),
     "no_layernorm_full_backbone_copy": merge(tboolean, default(False)),
     "first_n_layers": merge(tinteger, nullable),
     "new_backbone_training": merge(tboolean, default(True)),
+    "diverge_new_backbone_training": merge(tboolean, default(True)),
+    "clear_readout2": merge(tboolean, default(True)),
     "readout2_training": merge(tboolean, default(True)),
     "model_variants": merge(tlist, default([])),
+    "transform_choice": merge(tinteger, default(1)),
     "transform_variants": merge(tlist, default([])),
 }
 
@@ -84,6 +88,7 @@ auto_transform_schema = {
     "permute_interval": merge(tinteger, default(10)),
     "permute_model": merge(tboolean, default(True)),
     "use_custom_permute": merge(tboolean, default(False)),
+    "auto_transform_choice": merge(tinteger, default(1)),
     "auto_transform_variants": merge(tlist, default([])),
 }
 

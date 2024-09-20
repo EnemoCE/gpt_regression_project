@@ -18,9 +18,18 @@ class Transform:
         duplicate_params = cls.transform_params.get('duplicate_params')
         if duplicate_params:
             start, end, repeat = duplicate_params
-            new_layers = ls[start:end + 1]
-            ls = ls[:start] + new_layers * repeat + ls[end + 1:]
+            new_layers = ls[start-1:end]
+            ls = ls[:start-1] + new_layers * repeat + ls[end:]
         return ls
+    
+    @classmethod
+    def slice_layers(cls, ls):
+        slice_params = cls.transform_params.get('slice_params')
+        if slice_params:
+            start, end = slice_params
+            ls = ls[start:end + 1]
+        return ls
+
 
     @classmethod
     def auto_permute_layers(cls, ls):
