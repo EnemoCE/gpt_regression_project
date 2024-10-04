@@ -4,29 +4,27 @@ import numpy as np
 import os
 
 from curriculum import Curriculum
-from eval import evaluate_test_task, estimate_loss
+from eval import evaluate_test_task, evaluate_iterative_newton_test_task, estimate_loss
 from task_sampler import get_batch
 from plot_utils import built_fig, plt_icl, setup_plot_params
 from plot_layer_errors import plot_layer_errors
+from plot_emb_confusion_mx import plot_emb_confusion
+from configurations import update_transform
 from copy import deepcopy
 import torch.nn as nn
 
 
 
 
-def train_step(model, args, eval=False):
+def train_step(model, args, base_model=True):
     optimizer = args.optimizer
     batch_size = args.training.batch_size
    
-
+    
     xb, yb = get_batch(args.curriculum, batch_size)
-    # evaluate the loss
-    logits, logits2, loss1, loss2 = model(xb, yb, eval)
+    logits, loss =  model(xb, yb, base_model)
     optimizer.zero_grad(set_to_none=True)
-    if loss2:
-        loss2.backward()
-    else:
-        loss1.backward()
+    loss.backward()
     optimizer.step()
 
 
@@ -45,6 +43,7 @@ def train(model, args):
     permute_model = args.experiment_conf.auto_transform_conf.permute_model
     permute_interval = args.experiment_conf.auto_transform_conf.permute_interval
     short_description = args.experiment_conf.short_description
+
     
 
     wandb.init(
@@ -68,10 +67,10 @@ def train(model, args):
                 model.update_new_backbone()
             if model.transform_params.readout2_training:
                 for i in range(eval_interval):
-                    train_step(model, args, eval=True)
+                    train_step(model, args, base_model=False)
             losses = estimate_loss(model, args)
             loss1, loss2 = losses[0], losses[1]
-            print(f"step {iter}: train loss {loss1:.4f}, train loss 2 {loss2:.4f}")
+            print(f"step {iter}/{max_iters}: train loss {loss1:.4f}, train loss 2 {loss2:.4f}")
             wandb.log(
                 {
                     "loss1": loss1,
@@ -106,12 +105,9 @@ def train(model, args):
         if permute_model and iter % permute_interval == 0 and iter != 0:
             model.auto_recompose()
         if iter % plot_step == 0 and iter != 0:
-            model.auto_recompose()
             errors1 = evaluate_test_task(model, curriculum, 500, logs_ch=1)
             errors2 = evaluate_test_task(model, curriculum, 500, logs_ch=2)
 
-        
-            keys = []
             data1 = [[x, y] for (x, y) in zip(range(1, curriculum.n_points+1), errors1)]
             table1 = wandb.Table(data=data1, columns = ["Number of in-context examples", "Squared error"])
             data2 = [[x, y] for (x, y) in zip(range(1, curriculum.n_points+1), errors2)]
@@ -135,31 +131,71 @@ def train(model, args):
     
         curriculum.update()
 
-    def retrain_readout2(model_i, args, num_steps):
+    def retrain_readout2(model_i, args, num_steps, layer_number, logs_ch):
+        model_i.transform_params.readout2_training = True
         readout2_optimizer = torch.optim.AdamW(model_i._read_out2.parameters(), lr=args.training.learning_rate)
-        for _ in range(num_steps):
-            xb, yb = get_batch(args.curriculum, args.training.batch_size)
-            logits, logits2, loss1, loss2 = model_i(xb, yb, eval=True)
+        base_model = True if logs_ch == 1 else False
+        for step in range(num_steps):
+            xb, yb = get_batch(curriculum, args.training.batch_size)
+            logits, loss = model_i(xb, yb, base_model=base_model)
             readout2_optimizer.zero_grad()
-            loss2.backward()
+            loss.backward()
+            if step % 200 == 0:
+                print(f"Layer {layer_number} - Step {step}/{num_steps}: Readout2 Training Loss = {loss:.6f}")
             readout2_optimizer.step()
 
+    if not model.transform_params.no_layernorm_full_backbone_copy:
 
-    num_layers = model.configuration.n_layer
+        num_layers = model.new_configuration.n_layer * model.transform_params.full_backbone_rnn_iters
+        layer_errors = [[], []]
+        layer_errors_newton = []
+        layer_numbers = list(range(1, num_layers + 1))
+        base_layer_numbers = list(range(1, model.configuration.n_layer + 1))
+        layer_embeddings = [[None for j in range(len(base_layer_numbers))] for i in range(len(base_layer_numbers))]
 
-    layer_errors = []
-    layer_numbers = list(range(1, num_layers + 1))
 
-    for i in layer_numbers:
-        model_i = deepcopy(model)
-        model_i.transform_params.first_n_layers = i
-        model_i._read_out2 = nn.Linear(model_i.configuration.n_embd, 1).to(model_i._read_out2.weight.device)
-        retrain_readout2(model_i, args, num_steps=1000)
-        errors = evaluate_test_task(model_i, curriculum, 500, logs_ch=1)
-        error_at_25 = errors[24]
-        layer_errors.append(error_at_25)
+        def get_embdeddings_to_compare(layer_embeddings, layer_nums):
+            for i in range(layer_nums):
+                for j in range(layer_nums):
+                    model_ij = deepcopy(model)
+                    model_ij.transform_params.post_eval = True
+                    model_ij.transform_params.first_n_layers = i
+                    t_v = model_ij.transform_params.transform_variants
+                    variant = [i for i in  range(len(t_v)) if t_v[i] == "switch_layers"][0] + 1
+                    model_ij.transform_params, model_ij.auto_transform_params = update_transform(model_ij.transform_params,
+                                                                                  model_ij.auto_transform_params, variant, new_transform_params=[i+1, j+1])
+                    xb, yb = get_batch(curriculum, args.training.batch_size)
+                    embedding = model_ij._forward_base_post_eval_hidden(xb)
+                    cut_embedding = embedding[:, -1, :]
+                    layer_embeddings[i][j] = cut_embedding
+            return layer_embeddings
 
-    plot_save_path = os.path.join(out_dir, 'plots', short_description, 'layer_errors.png')
-    plot_layer_errors(layer_numbers, layer_errors, save_path=plot_save_path)
+
+        def post_eval_layers(layer_errors, layer_nums, logs_ch):
+            for i in layer_nums:
+                model_i = deepcopy(model)
+                model_i.transform_params.post_eval = True
+                model_i.transform_params.first_n_layers = i
+                model_i._read_out2 = nn.Linear(model_i.configuration.n_embd, 1).to(model_i._read_out2.weight.device)
+                retrain_readout2(model_i, args, num_steps=model.transform_params.retrain_readout2_iters, layer_number=i, logs_ch=logs_ch)
+                errors = evaluate_test_task(model_i, curriculum, count=500, logs_ch=logs_ch)
+                error_at_25 = errors[24]
+                layer_errors[logs_ch-1].append(error_at_25)
+            return layer_errors
+
+        layer_embeddings = get_embdeddings_to_compare(layer_embeddings, len(base_layer_numbers))
+        plot_save_path = os.path.join(out_dir, 'plots', short_description, 'embeddings_similarity.png')
+        plot_emb_confusion(layer_embeddings, base_layer_numbers, save_path=plot_save_path)
+
+        layer_errors = post_eval_layers(layer_errors, base_layer_numbers, logs_ch=1)
+        layer_errors = post_eval_layers(layer_errors, layer_numbers, logs_ch=2)
+        newton_steps = layer_numbers if len(base_layer_numbers) < len(layer_numbers) else base_layer_numbers
+
+        for i in newton_steps:
+            error_newton = evaluate_iterative_newton_test_task(curriculum, num_iterations=i, count=5000)
+            layer_errors_newton.append(error_newton)
+
+        plot_save_path = os.path.join(out_dir, 'plots', short_description, 'layer_errors.png')
+        plot_layer_errors(layer_numbers, base_layer_numbers, layer_errors, layer_errors_newton, save_path=plot_save_path)
 
     return wandb.run

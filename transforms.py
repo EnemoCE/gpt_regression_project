@@ -10,7 +10,8 @@ class Transform:
         switch_params = cls.transform_params.get('switch_params')
         if switch_params:
             i, j = switch_params
-            ls[i], ls[j] = ls[j], ls[i]
+            #ls[i], ls[j] = ls[j], ls[i]
+            ls[i] = ls[j]
         return ls
 
     @classmethod

@@ -96,5 +96,3 @@ class Experiment:
         conf = self.init_conf_short_description(conf, short_name=short_name)
         self._conf = build_conf(conf)
         return conf
-    
-

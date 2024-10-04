@@ -1,0 +1,31 @@
+name: in-context-learning-notebook-2
+channels:
+  - conda-forge
+  - nvidia
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.9
+  - pip>=23.0
+  - setuptools>=67.0
+  - wheel
+  - pytorch=2.4
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.4
+  - numpy=1.22.3
+  - pandas=1.4.2
+  - scikit-learn=1.0.2
+  - matplotlib=3.5.2
+  - seaborn=0.11.2
+  - tqdm=4.64.0
+  - transformers=4.17.0
+  - wandb=0.12.11
+  - xgboost=1.6.1
+  - protobuf=3.20.1
+  - scipy=1.8.0
+  - pyyaml=5.4
+  - cerberus=1.3.2
+  - certifi=2023.7.22
+  - pip:
+    - quinine==0.3.0

@@ -27,3 +27,17 @@ def build_conf(conf_data):
     auto_transform_func = variant([auto_transform_variants[auto_transform_choice-1]], 'auto')(im_auto_transform_func)
 
     return Config(conf_data, transform_func, auto_transform_func)
+
+
+def update_transform(transform_params, auto_transform_params, transform_choice, new_transform_params, auto_transform_choice=None, new_auto_transform_params=None):
+    transform_variants = transform_params.transform_variants
+    auto_transform_variants = auto_transform_params.auto_transform_variants
+    if auto_transform_choice is None:
+        auto_transform_choice = transform_choice
+        auto_transform_variants = transform_variants
+        new_auto_transform_params = new_transform_params
+    Transform.transform_params[transform_variants[transform_choice-1]] = new_transform_params
+    Transform.transform_params[auto_transform_variants[auto_transform_choice-1]] = new_auto_transform_params
+    transform_params.transform_func = variant([transform_variants[transform_choice-1]], 'copy')(im_transform_func)
+    auto_transform_params.auto_transform_func =  variant([auto_transform_variants[auto_transform_choice-1]], 'auto')(im_auto_transform_func)
+    return transform_params, auto_transform_params

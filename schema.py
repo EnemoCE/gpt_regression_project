@@ -71,13 +71,15 @@ transform_schema = {
     "switch_params": merge(tlist, nullable),
     "duplicate_params": merge(tlist, nullable),
     "slice_params": merge(tlist, nullable),
-    "full_backbone_copy": merge(tboolean, default(False)),
+    "full_backbone_rnn_iters":  merge(tinteger, default(2)),
     "no_layernorm_full_backbone_copy": merge(tboolean, default(False)),
     "first_n_layers": merge(tinteger, nullable),
     "new_backbone_training": merge(tboolean, default(True)),
     "diverge_new_backbone_training": merge(tboolean, default(True)),
     "clear_readout2": merge(tboolean, default(True)),
     "readout2_training": merge(tboolean, default(True)),
+    "post_eval": merge(tboolean, default(True)),
+    "retrain_readout2_iters":  merge(tinteger, default(1800)),
     "model_variants": merge(tlist, default([])),
     "transform_choice": merge(tinteger, default(1)),
     "transform_variants": merge(tlist, default([])),
@@ -94,6 +96,7 @@ auto_transform_schema = {
 
 experiment_schema = {
     "log_model_weights": merge(tboolean, default(True)),
+    "logarithmic_scale": merge(tboolean, default(True)),
     "transform_conf": stdict(transform_schema),
     "auto_transform_conf": stdict(auto_transform_schema),
 }
