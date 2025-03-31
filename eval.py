@@ -61,7 +61,7 @@ def evaluate_alt_cfm(model, hs_pred, target_features):
     processed_features_hs = model._feature_processor(h_targets.view(B, T, C)) # (B, T, E)
     def ode_func(t, b_t):
         t = t.view(1, -1).expand(b_t.shape[0], -1).squeeze(1) 
-        return model._alt_cfm_read_out(t, b_t, processed_features_hs) # (B*T, E)
+        return model._alt_cfm_read_out(t, b_t, processed_features_hs) # (B*T, C)
     predictions = torch.empty_like(hs_pred).unsqueeze(0)
     num_samples = 30
     for _ in range(num_samples):

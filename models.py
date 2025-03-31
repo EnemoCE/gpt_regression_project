@@ -855,10 +855,10 @@ class TransformerModel(nn.Module):
         h_ut = self.compute_conditional_vector_field(hs_pred.view(B*T, C), h_targets)
         #ut = self.compute_conditional_vector_field(x0, targets.view(B*T))
         print(torch.isnan(hs_pred).any().item(), 'hs_pred')
-        h_vt = self._alt_cfm_read_out(t, z_h, processed_features_hs) # (B*T, E)
+        h_vt = self._alt_cfm_read_out(t, z_h, processed_features_hs) # (B*T, C)
         print(1)
         #print(h_vt)
-        vt = self._read_out2(h_vt.detach()).view(B*T) # (B*T, C) -> (B*T, 1) -> (B*T)
+        vt = h_vt.detach() #(B*T, C)
         #loss_y = F.mse_loss(vt, ut)  #training only _read_out
         loss_h = F.mse_loss(h_vt, h_ut)
         #print(loss_h.item())
