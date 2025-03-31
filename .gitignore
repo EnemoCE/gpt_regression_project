@@ -18,3 +18,5 @@ venv/
 wandb/
 exp_models/
 
+# Ignore other files
+notes.py

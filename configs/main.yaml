@@ -8,7 +8,7 @@ model:
     n_positions: 25
     family: gpt2
     n_embd: 256
-    n_layer: 9
+    n_layer: 6
     n_head: 4
 
 training:
@@ -23,6 +23,7 @@ training:
     eval_interval: 200
     eval_iters: 20
     curriculum:
+        ready_data: False
         dims:
             start: 5
             end: 5
@@ -37,10 +38,14 @@ training:
 experiment_conf:
     log_model_weights: True
     logarithmic_scale: False
+    show_normality: False
+    show_layer_errors: True
+    show_embedding_confusion: False
     transform_conf:
         switch_params: null
         duplicate_params: null
         slice_params: null
+        average_params: null
         full_backbone_rnn_iters: 1
         no_layernorm_full_backbone_copy: False
         first_n_layers: null
@@ -49,6 +54,7 @@ experiment_conf:
         readout2_training: False
         retrain_readout2_iters: 3000
         post_eval: False
+        cfm_loss: [0, 0]
         clear_readout2: False
         model_variants: 
           - "modified"
@@ -58,6 +64,7 @@ experiment_conf:
           - "duplicate_layers"
           - "switch_layers"
           - "slice_layers"
+          - "average_layers"
     auto_transform_conf:
         permute_bounds_params: [1, 3]
         permute_interval: 10

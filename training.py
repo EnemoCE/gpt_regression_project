@@ -4,10 +4,10 @@ import numpy as np
 import os
 
 from curriculum import Curriculum
-from eval import evaluate_test_task, evaluate_iterative_newton_test_task, estimate_loss
+from eval import evaluate_test_task, evaluate_iterative_newton_test_task, evaluate_test_task_for_errors_distribution, estimate_loss
 from task_sampler import get_batch
 from plot_utils import built_fig, plt_icl, setup_plot_params
-from plot_layer_errors import plot_layer_errors
+from plot_layer_errors import plot_layer_errors, plot_and_analyze_error_for_normality
 from plot_emb_confusion_mx import plot_emb_confusion
 from configurations import update_transform
 from copy import deepcopy
@@ -15,17 +15,28 @@ import torch.nn as nn
 
 
 
-
-def train_step(model, args, base_model=True):
+def train_step(model, args, base_model=True, iter=None):
     optimizer = args.optimizer
     batch_size = args.training.batch_size
    
     
-    xb, yb = get_batch(args.curriculum, batch_size)
+    xb, yb = get_batch(args.curriculum, batch_size, iter)
     logits, loss =  model(xb, yb, base_model)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
+    #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
     optimizer.step()
+    found_nan_inf = False
+    for name, param in model.named_parameters():
+        if param.grad is not None: # Проверяем и градиенты тоже на всякий случай
+            if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                print(f"NaN/Inf found in GRADIENT of {name}")
+                found_nan_inf = True
+        if torch.isnan(param.data).any() or torch.isinf(param.data).any():
+            print(f"NaN/Inf found in WEIGHTS of {name}")
+            found_nan_inf = True
+    if found_nan_inf:
+        print("!!! NaN/Inf detected in parameters/gradients after step !!!")
 
 
 
@@ -40,11 +51,13 @@ def train(model, args):
 
 
     log_model_weights = args.experiment_conf.log_model_weights
+    show_normality = args.experiment_conf.show_normality
+    show_layer_errors = args.experiment_conf.show_layer_errors
+    show_embedding_confusion = args.experiment_conf.show_embedding_confusion
     permute_model = args.experiment_conf.auto_transform_conf.permute_model
     permute_interval = args.experiment_conf.auto_transform_conf.permute_interval
     short_description = args.experiment_conf.short_description
 
-    
 
     wandb.init(
             project = args.wandb.project,
@@ -61,13 +74,13 @@ def train(model, args):
     fig, axes, labels, hdisplay = built_fig(args)
 
     for iter in range(max_iters):
-        train_step(model, args)
+        train_step(model, args, iter=iter)
         if iter % eval_interval == 0 or iter == max_iters - 1:
             if not model.transform_params.diverge_new_backbone_training:
                 model.update_new_backbone()
             if model.transform_params.readout2_training:
                 for i in range(eval_interval):
-                    train_step(model, args, base_model=False)
+                    train_step(model, args, base_model=False, iter=iter)
             losses = estimate_loss(model, args)
             loss1, loss2 = losses[0], losses[1]
             print(f"step {iter}/{max_iters}: train loss {loss1:.4f}, train loss 2 {loss2:.4f}")
@@ -182,20 +195,35 @@ def train(model, args):
                 error_at_25 = errors[24]
                 layer_errors[logs_ch-1].append(error_at_25)
             return layer_errors
+        
+        def get_errors_for_distribution(layer_num):
+            model_ = deepcopy(model)
+            model_.transform_params.post_eval = True
+            model_.transform_params.first_n_layers = layer_num[-1]
+            model_._read_out2 = nn.Linear(model_.configuration.n_embd, 1).to(model_._read_out2.weight.device)
+            retrain_readout2(model_, args, num_steps=model.transform_params.retrain_readout2_iters, layer_number=layer_num[-1], logs_ch=1)
+            errors = evaluate_test_task_for_errors_distribution(model_, curriculum, count=5000, logs_ch=1)
+            return errors
 
-        layer_embeddings = get_embdeddings_to_compare(layer_embeddings, len(base_layer_numbers))
-        plot_save_path = os.path.join(out_dir, 'plots', short_description, 'embeddings_similarity.png')
-        plot_emb_confusion(layer_embeddings, base_layer_numbers, save_path=plot_save_path)
+        if show_normality:
+            plot_and_analyze_error_for_normality(get_errors_for_distribution(layer_numbers))
 
-        layer_errors = post_eval_layers(layer_errors, base_layer_numbers, logs_ch=1)
-        layer_errors = post_eval_layers(layer_errors, layer_numbers, logs_ch=2)
-        newton_steps = layer_numbers if len(base_layer_numbers) < len(layer_numbers) else base_layer_numbers
+        if show_embedding_confusion:
+            layer_embeddings = get_embdeddings_to_compare(layer_embeddings, len(base_layer_numbers))
+            plot_save_path = os.path.join(out_dir, 'plots', short_description, 'embeddings_similarity.png')
+            plot_emb_confusion(layer_embeddings, base_layer_numbers, save_path=plot_save_path)
+        
+        if show_layer_errors:
+            layer_errors = post_eval_layers(layer_errors, base_layer_numbers, logs_ch=1)
+            layer_errors = post_eval_layers(layer_errors, layer_numbers, logs_ch=2)
+            newton_steps = layer_numbers if len(base_layer_numbers) < len(layer_numbers) else base_layer_numbers
 
-        for i in newton_steps:
-            error_newton = evaluate_iterative_newton_test_task(curriculum, num_iterations=i, count=5000)
-            layer_errors_newton.append(error_newton)
+            for i in newton_steps:
+                error_newton = evaluate_iterative_newton_test_task(curriculum, num_iterations=i, count=5000)
+                layer_errors_newton.append(error_newton)
 
-        plot_save_path = os.path.join(out_dir, 'plots', short_description, 'layer_errors.png')
-        plot_layer_errors(layer_numbers, base_layer_numbers, layer_errors, layer_errors_newton, save_path=plot_save_path)
+            plot_save_path = os.path.join(out_dir, 'plots', short_description, 'layer_errors.png')
+            plot_layer_errors(layer_numbers, base_layer_numbers, layer_errors, layer_errors_newton, save_path=plot_save_path)
+        
 
     return wandb.run

@@ -2,7 +2,21 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.ticker import FuncFormatter
 from scipy.interpolate import make_interp_spline
+import scipy.stats as stats
 import numpy as np
+
+
+
+def plot_and_analyze_error_for_normality(data):
+    for i in range(len(data)):
+        sns.histplot(data[i], kde=True)
+        stats.probplot(data[i], dist="norm", plot=plt)
+        plt.show()
+        stat, p = stats.normaltest(data[i])
+        print(f"Статистика: {stat}, p-значение: {p}  Тест Д’Агостино–Пирсона")
+        mu, sigma = np.mean(data[i]), np.std(data[i], ddof=1)  # Оценка параметров нормального распределения
+        stat, p = stats.kstest(data[i], 'norm', args=(mu, sigma))
+        print(f"Статистика: {stat}, p-значение: {p} Тест Колмогорова-Смирнова")
 
 def plot_layer_errors(layer_numbers, base_layer_numbers, layer_errors, newton_errors, save_path=None):
     sns.set(style="whitegrid", rc={"grid.linewidth": 0.5})

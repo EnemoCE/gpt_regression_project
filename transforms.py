@@ -30,6 +30,11 @@ class Transform:
             start, end = slice_params
             ls = ls[start:end + 1]
         return ls
+    
+    @classmethod
+    def average_layers(cls, ls):
+        return ls
+
 
 
     @classmethod
