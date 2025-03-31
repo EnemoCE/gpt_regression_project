@@ -69,28 +69,7 @@ def evaluate_alt_cfm(model, hs_pred, target_features):
         predictions = torch.cat([predictions, b_pred.unsqueeze(0)], dim=0)
     predictions = predictions.mean(dim=0)
     return predictions.view(B, T)
-"""
-B, TC = logits.shape
-x0 = logits.view(B*TC, 1)     # B, TC ->  B*TC, 1
-steps = 200
-t_eval = torch.linspace(0, 1, steps, device=device).type_as(x0)
-features = features.view(B, 1, TC).expand(B, TC, TC)  # B, TC -> B, TC, TC
-mask = torch.tril(torch.ones(TC, TC), diagonal=-1)  
-mask = mask.to(features.device)
-#mask = mask.unsqueeze(0)  # (1, TC, TC)  not needed due to automatic broadcasting
-features = features * mask  # (B, TC, TC')
-features = features.view(B*TC, -1) #(B*TC, TC')
-def ode_func(t, b_t):
-    t = torch.tensor([t]).to(device).view(1, -1).expand(b_t.shape[0], -1).squeeze(1)
-    return model._cfm_read_out(t, b_t, features)[:,0,:]
-predictions = torch.empty_like(x0).unsqueeze(0)
-num_samples = 30
-for _ in range(num_samples):
-    b_pred = odeint(ode_func, x0, t_eval)[-1]
-    predictions = torch.cat([predictions, b_pred.detach().unsqueeze(0)], dim=0)
-predictions = predictions.mean(dim=0)
-return predictions.view(B, TC)
-"""
+
 
 
 
