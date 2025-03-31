@@ -79,12 +79,12 @@ def evaluate_test_task(model, curriculum, count, logs_ch=2):
     model.eval()
     x, targets = get_batch(curriculum, count)
     base_model = True if logs_ch == 1 else False
-    logits, optional_h_states = model(x, targets=None, base_model=base_model)
+    logits, loss = model(x, targets=None, base_model=base_model)
 
     targets = targets[:, ::2, 0]
     if model.transform_params.cfm_loss[0] and logs_ch==2:
         if model.transform_params.cfm_loss[1] == 2:
-            logits = evaluate_alt_cfm(model, optional_h_states, x[:,1::2,0])
+            logits = evaluate_alt_cfm(model, logits, x[:,1::2,0])
         else:
             logits = evaluate_cfm(model, logits, x[:,1::2,0])
     final_errors = torch.square(targets-logits).mean(dim=0)

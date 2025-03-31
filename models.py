@@ -895,9 +895,9 @@ class TransformerModel(nn.Module):
         if targets is None:
             logits = logits.detach()
             loss = None
-            if cfm_loss[1] == 2:
+            if self.do_cfm(cfm_loss, base_model) and cfm_loss[1] == 2:
                 hs_pred = logits[:,::2,:]
-                return logits, hs_pred
+                return hs_pred, loss
             logits = logits[:, ::2, 0]
         else:
             targets = targets[:, ::2, 0]
