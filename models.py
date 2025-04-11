@@ -455,6 +455,87 @@ class ModifiedCFMTransformer(nn.Module):
 
 
 
+def modulate(x, shift, scale):
+    # x: (B, T, C)
+    # shift, scale: (B, C)
+    # broadcasting к (B, 1, C)
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+class ModulatedBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.rms_norm1 = RMSNorm(config.n_embd)
+        self.attn = CausalSelfAttention(config)
+        self.rms_norm2 = RMSNorm(config.n_embd)
+        self.mlp = MLP(config)
+
+        # MLP для предсказания параметров модуляции из t_emb
+        # Выход: 2*C для norm1->attn (scale, shift) + 2*C для norm2->mlp (scale, shift)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(config.n_embd, 4 * config.n_embd, bias=True)
+        )
+        # Инициализация последнего слоя нулями (AdaLN-Zero)
+        nn.init.zeros_(self.adaLN_modulation[-1].weight)
+        nn.init.zeros_(self.adaLN_modulation[-1].bias)
+
+    def forward(self, x, t_emb):
+        # x: (B, T, C)
+        # t_emb: (B, C)
+
+        # Вычисляем параметры модуляции
+        # chunk(4, dim=1) делит тензор (B, 4*C) на 4 тензора (B, C)
+        scale_attn, shift_attn, scale_mlp, shift_mlp = \
+            self.adaLN_modulation(t_emb).chunk(4, dim=1)
+
+
+        x_mod_attn = modulate(self.rms_norm1(x), shift_attn, scale_attn)
+        x = x + self.attn(x_mod_attn)
+
+        x_mod_mlp = modulate(self.rms_norm2(x), shift_mlp, scale_mlp)
+        x = x + self.mlp(x_mod_mlp)
+
+        return x
+
+@dataclass
+class U_GPTConfig:
+    n_layer: int = 4 
+    n_head: int = 4
+    n_embd: int = 32 
+    out_n_embd: int = 5
+
+
+class UniCFMTransformer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        assert config.n_embd is not None
+        self.time_embed = TimestepEmbedder(config.n_embd)
+        self.z_h_proj = nn.Linear(config.out_n_embd, config.n_embd) # Project z_h
+        self.blocks = nn.ModuleList([ModulatedBlock(config) for _ in range(config.n_layer)])
+        self.ln_f = nn.LayerNorm(config.n_embd)
+        self.head = nn.Linear(config.n_embd, config.out_n_embd, bias=False)
+
+
+    def forward(self, t, z_h):
+        # t: форма (B,)
+        # z_h: форма (B, T, C)
+        B, T, C = z_h.shape
+
+        t_emb = self.time_embed(t) # (B, E), где E = C
+        z_emb = self.z_h_proj(z_h)
+        x = z_emb
+
+        for block in self.blocks:
+            x = block(x, t_emb)
+
+        x = self.ln_f(x)
+        h_vt = self.head(x) # (B, T, E)
+
+        return h_vt
+
+
+
 class TransformerModel(nn.Module):
     def __init__(self, n_dims, n_positions, n_embd=128, n_layer=12, n_head=4, transform_params=None, auto_transform_params = None, 
                  model_variants = ['basic'], output_attentions=False):
@@ -472,6 +553,7 @@ class TransformerModel(nn.Module):
         self.cfm_configuration = GPTConfig(y_n_positions=n_positions)
         self.modified_cfm_configuration = M_GPTConfig(out_n_embd=n_embd)
         self.feature_processor_config = F_GPTConfig(out_n_embd=n_embd)
+        self.uni_cfm_configuration = U_GPTConfig(out_n_embd=32)
         self.name = f"gpt2_embd={n_embd}_layer={n_layer}_head={n_head}"
         self.n_positions = n_positions
         self.n_dims = n_dims
@@ -484,10 +566,12 @@ class TransformerModel(nn.Module):
         self._feature_processor = FeatureProcessor(self.feature_processor_config)
         self._cfm_read_out = CFMTransformer(self.cfm_configuration)
         self._alt_cfm_read_out = ModifiedCFMTransformer(self.modified_cfm_configuration)
+        self._uni_cfm_read_out = UniCFMTransformer(self.uni_cfm_configuration)
         self.new_configuration = self.build_new_config()
         self.update_new_backbone()
         self._read_out = nn.Linear(n_embd, 1)
-        self._read_out2 = nn.Linear(n_embd, 1)
+        self._read_out2 = nn.Linear(32, 1)
+        self._back_to_cfm_read_out = nn.Linear(n_embd, 32)
         self._transmit = nn.Linear(n_embd, n_embd)
 
 
@@ -788,7 +872,7 @@ class TransformerModel(nn.Module):
                     break
                 in_output = self._new_backbone(inputs_embeds=in_output, model_variant = self.model_variants[k]).last_hidden_state
         
-        if self.transform_params.cfm_loss[1] == 2:
+        if self.transform_params.cfm_loss[1] in (2, 3):
             return in_output
         
         if self.transform_params.readout2_training:
@@ -846,6 +930,7 @@ class TransformerModel(nn.Module):
     def alt_cfm_loss(self, hs_pred, targets):
         B, T, C = hs_pred.shape 
         h_targets =  self.h_inv(targets.view(B*T, 1)) # (B*T, C)
+        print(h_targets.shape)
         #print(self._read_out2(h_targets)[0:5], targets.view(B*T, 1)[0:5])
         processed_features_hs = self._feature_processor(hs_pred) # (B, T, E)
         #processed_features_hs = self._feature_processor(h_targets.view(B, T, C)) # (B, T, E)
@@ -864,6 +949,28 @@ class TransformerModel(nn.Module):
         #print(loss_h.item())
         #loss = loss_h + loss_y
         return vt, loss_h
+    
+    def uni_cfm_loss(self, back_hs_pred, targets):
+        # hs_pred: (B, T, C) 
+        # targets: (B, T)
+        hs_pred = self._back_to_cfm_read_out(back_hs_pred) #(B, T, E)
+        B, T, E = hs_pred.shape
+        #print(B, T, C)
+        h_targets = self.h_inv(targets.view(B * T, 1)).view(B, T, E) # (B, T, E)
+        t = torch.rand(B, device=hs_pred.device) # (B,)
+
+        z_h = self.sample_conditional_pt(hs_pred, h_targets, t, sigma=0.0) # (B, T, E)
+
+        h_ut = self.compute_conditional_vector_field(hs_pred, h_targets) # (B, T, E)
+
+        h_vt = self._uni_cfm_read_out(t, z_h) # (B, T, E)
+        vt = h_vt.view(B*T, E).detach() #(B*T, E)
+        
+        loss_h = F.mse_loss(h_vt, h_ut)
+
+
+        return vt, loss_h 
+
 
 
     # cfm_loss 0,0 -> none    cfm_loss 1,0 -> modified     cfm_loss 2,0 -> base, modified    cfm_loss 2,1 -> base, modified + aditional train,  2, 2 alt_training
@@ -895,7 +1002,7 @@ class TransformerModel(nn.Module):
         if targets is None:
             logits = logits.detach()
             loss = None
-            if self.do_cfm(cfm_loss, base_model) and cfm_loss[1] == 2:
+            if self.do_cfm(cfm_loss, base_model) and cfm_loss[1] in (2, 3):
                 hs_pred = logits[:,::2,:]
                 return hs_pred, loss
             logits = logits[:, ::2, 0]
@@ -905,6 +1012,9 @@ class TransformerModel(nn.Module):
                 if cfm_loss[1] == 2:
                     hs_pred = logits[:,::2,:]
                     logits, loss = self.alt_cfm_loss(hs_pred, targets)
+                elif cfm_loss[1] == 3:
+                    hs_pred = logits[:,::2,:]
+                    logits, loss = self.uni_cfm_loss(hs_pred, targets)
                 else:
                     logits = logits[:, ::2, 0]
                     logits, loss = self.cfm_loss(logits, targets)

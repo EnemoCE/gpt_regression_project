@@ -55,13 +55,15 @@ def evaluate_cfm(model, logits):
 def evaluate_alt_cfm(model, hs_pred, target_features):
     B, T, C = hs_pred.shape 
     hs_pred = hs_pred.view(B*T, C)
-    steps = 200
+    steps = 200 
     t_eval = torch.linspace(0, 1, steps, device=device).type_as(hs_pred)
     h_targets =  model.h_inv(target_features.view(B*T, 1)) # (B*T, C)
     processed_features_hs = model._feature_processor(h_targets.view(B, T, C)) # (B, T, E)
+
     def ode_func(t, b_t):
-        t = t.view(1, -1).expand(b_t.shape[0], -1).squeeze(1) 
+        t = t.expand(b_t.shape[0])
         return model._alt_cfm_read_out(t, b_t, processed_features_hs) # (B*T, C)
+
     predictions = torch.empty_like(hs_pred).unsqueeze(0)
     num_samples = 30
     for _ in range(num_samples):
@@ -69,6 +71,28 @@ def evaluate_alt_cfm(model, hs_pred, target_features):
         predictions = torch.cat([predictions, b_pred.unsqueeze(0)], dim=0)
     predictions = predictions.mean(dim=0)
     return predictions.view(B, T)
+
+
+@torch.no_grad()
+def evaluate_uni_cfm(model, back_hs_pred, target_features):
+    hs_pred = model._back_to_cfm_read_out(back_hs_pred) #(B, T, E)
+    B, T, E = hs_pred.shape 
+    steps = 200
+    t_eval = torch.linspace(0, 1, steps, device=device).type_as(hs_pred)
+    h_targets =  model.h_inv(target_features.view(B*T, 1)).view(B, T, E) # (B, T, E)
+
+    def ode_func(t, b_t):
+        t = t.expand(b_t.shape[0])  #(B)
+        return model._uni_cfm_read_out(t, b_t) # (B, T, E)
+
+    predictions = torch.empty((B*T), device=hs_pred.device).unsqueeze(0)
+    num_samples = 30
+    for _ in range(num_samples):
+        b_pred = model._read_out2(odeint(ode_func, h_targets, t_eval)[-1]).view(B*T).detach()  # (B, T, E) -> (B, T, 1) -> (B*T)
+        predictions = torch.cat([predictions, b_pred.unsqueeze(0)], dim=0)
+    predictions = predictions.mean(dim=0)
+    return predictions.view(B, T)
+
 
 
 
@@ -85,6 +109,8 @@ def evaluate_test_task(model, curriculum, count, logs_ch=2):
     if model.transform_params.cfm_loss[0] and logs_ch==2:
         if model.transform_params.cfm_loss[1] == 2:
             logits = evaluate_alt_cfm(model, logits, x[:,1::2,0])
+        elif model.transform_params.cfm_loss[1] == 3:
+            logits = evaluate_uni_cfm(model, logits, x[:,1::2,0])
         else:
             logits = evaluate_cfm(model, logits, x[:,1::2,0])
     final_errors = torch.square(targets-logits).mean(dim=0)
